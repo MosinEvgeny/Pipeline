@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strconv"
@@ -29,6 +30,7 @@ type RingBuffer struct {
 
 // NewRingBuffer - создание нового кольцевого буфера.
 func NewRingBuffer(size int) *RingBuffer {
+	log.Println("Создан новый кольцевой буфер размером:", size)
 	return &RingBuffer{
 		data: make([]int, size),
 		size: size,
@@ -39,11 +41,12 @@ func NewRingBuffer(size int) *RingBuffer {
 func (rb *RingBuffer) Push(val int) {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
-
+	log.Println("Добавлено значение в буфер:", val)
 	rb.data[rb.tail] = val
 	rb.tail = (rb.tail + 1) % rb.size
 	if rb.tail == rb.head {
 		rb.head = (rb.head + 1) % rb.size // Перезапись старых данных при переполнении
+		log.Println("Буфер переполнен. Старые данные перезаписаны.")
 	}
 }
 
@@ -53,9 +56,10 @@ func (rb *RingBuffer) Flush() []int {
 	defer rb.mu.Unlock()
 
 	if rb.head == rb.tail {
+		log.Println("Буфер пуст. Очистка не требуется.")
 		return nil // Буфер пуст
 	}
-
+	log.Println("Очистка буфера.")
 	data := make([]int, 0, rb.size)
 	for rb.head != rb.tail {
 		data = append(data, rb.data[rb.head])
@@ -67,13 +71,19 @@ func (rb *RingBuffer) Flush() []int {
 // Стадия пайплайна: фильтр отрицательных чисел.
 func filterNegative(in <-chan int, out chan<- int, done <-chan bool) {
 	defer close(out)
+	log.Println("Стадия filterNegative запущена.")
 	for {
 		select {
 		case n := <-in:
+			log.Println("Получено значение:", n)
 			if n >= 0 {
+				log.Println("Значение", n, "прошло фильтр (>= 0)")
 				out <- n
+			} else {
+				log.Println("Значение", n, "не прошло фильтр (< 0)")
 			}
 		case <-done:
+			log.Println("Стадия filterNegative завершена.")
 			return
 		}
 	}
@@ -82,13 +92,19 @@ func filterNegative(in <-chan int, out chan<- int, done <-chan bool) {
 // Стадия пайплайна: фильтр чисел, не кратных 3 (исключая 0).
 func filterNotDivisibleBy3(in <-chan int, out chan<- int, done <-chan bool) {
 	defer close(out)
+	log.Println("Стадия filterNotDivisibleBy3 запущена.")
 	for {
 		select {
 		case n := <-in:
+			log.Println("Получено значение:", n)
 			if n != 0 && n%3 == 0 {
+				log.Println("Значение", n, "прошло фильтр (!= 0 && кратно 3)")
 				out <- n
+			} else {
+				log.Println("Значение", n, "не прошло фильтр")
 			}
 		case <-done:
+			log.Println("Стадия filterNotDivisibleBy3 завершена.")
 			return
 		}
 	}
@@ -97,6 +113,7 @@ func filterNotDivisibleBy3(in <-chan int, out chan<- int, done <-chan bool) {
 // Стадия пайплайна: буферизация и периодическая отправка данных.
 func bufferAndSend(in <-chan int, out chan<- int, done <-chan bool, bufferSize int, flushInterval time.Duration) {
 	defer close(out)
+	log.Println("Стадия bufferAndSend запущена.")
 	buffer := NewRingBuffer(bufferSize)
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
@@ -104,15 +121,20 @@ func bufferAndSend(in <-chan int, out chan<- int, done <-chan bool, bufferSize i
 	for {
 		select {
 		case n := <-in:
+			log.Println("Получено значение:", n)
 			buffer.Push(n)
 		case <-ticker.C:
+			log.Println("Сработал таймер.")
 			for _, n := range buffer.Flush() {
 				out <- n
+				log.Println("Отправлено значение из буфера:", n)
 			}
 		case <-done:
+			log.Println("Стадия bufferAndSend завершена. Очистка буфера перед завершением.")
 			// Очистка буфера перед завершением
 			for _, n := range buffer.Flush() {
 				out <- n
+				log.Println("Отправлено значение из буфера:", n)
 			}
 			return
 		}
@@ -120,6 +142,7 @@ func bufferAndSend(in <-chan int, out chan<- int, done <-chan bool, bufferSize i
 }
 
 func main() {
+	log.SetOutput(os.Stdout) // Направляем логи в консоль
 	// Обработка прерывания
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
@@ -127,6 +150,7 @@ func main() {
 	// Канал для сигнала завершения работы
 	done := make(chan bool)
 	defer close(done)
+	log.Println("Программа запущена.")
 
 	fmt.Println("Программа запущена. Начинайте вводить целые числа:")
 
@@ -138,12 +162,15 @@ func main() {
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if num, err := strconv.Atoi(line); err == nil {
+				log.Println("Введено число:", num)
 				input <- num
 			} else {
+				log.Println("Некорректный ввод:", line)
 				fmt.Println("Некорректный ввод. Введите целое число:")
 			}
 		}
 		fmt.Println("Ввод завершен.")
+		log.Println("Ввод завершен.")
 	}()
 
 	// Создание каналов для пайплайна
@@ -163,8 +190,10 @@ func main() {
 		select {
 		case num := <-pipelineOut:
 			fmt.Printf("Получены данные: %d\n", num)
+			log.Println("Выведены данные:", num)
 		case <-interrupt:
 			fmt.Println("\nПрограмма завершена по запросу пользователя.")
+			log.Println("Программа завершена по запросу пользователя.")
 			done <- true
 			return
 		}
