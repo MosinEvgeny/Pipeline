@@ -1,13 +1,13 @@
-FROM golang:latest AS compiling_stage
-RUN mkdir -p /go/src/pipeline
-WORKDIR /go/src/pipeline
-ADD pipeline.go .
-ADD go.mod .
-RUN go install .
+FROM golang:1.23.0 AS build
+WORKDIR /build
+COPY go.mod ./
+RUN go mod download
+COPY *.go ./
+RUN go build -o pipeline -ldflags="-s -w"
 
 FROM alpine:latest
 LABEL version="1.0"
 LABEL maintainer="Mosin Evgeny <m0s1nevgeny@yandex.ru>"
-WORKDIR /root/
-COPY --from=compiling_stage /go/bin/pipeline .
-ENTRYPOINT ./pipeline
+WORKDIR /app
+COPY --from=build /build/pipeline .
+CMD ["./pipeline"]
